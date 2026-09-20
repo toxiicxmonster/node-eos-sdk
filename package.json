@@ -43,7 +43,7 @@
     "build": "node-gyp rebuild",
     "build:debug": "node-gyp rebuild --debug",
     "bundle": "prebuildify --napi --strip",
-    "test": "node --test \"test/unit/**/*.test.js\"",
+    "test": "node scripts/test-unit.js",
     "test:smoke": "node test/smoke.js",
     "test:loopback": "node test/p2p-loopback.js"
   },
