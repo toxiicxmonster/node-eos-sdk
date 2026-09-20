@@ -1,0 +1,46 @@
+name: Build report
+description: Report a successful or failing build on a platform / SDK version
+labels: [build]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Successful build reports are genuinely useful here, not just failures.
+        The native layer is written against Epic's published C API rather than a
+        pinned copy of the headers, so knowing which SDK versions compile clean
+        is information this project does not otherwise have.
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: EOS SDK version
+      placeholder: "1.17.0"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and toolchain
+      placeholder: "macOS 15.1 arm64, Xcode CLT 16.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      options:
+        - Built clean
+        - Built with warnings
+        - Failed to compile
+        - Compiled but failed at runtime
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Compiler output
+      description: For a failure, the first error is usually the whole story.
+      render: text

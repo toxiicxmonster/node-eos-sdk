@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.cc text eol=lf
+*.h  text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.md text eol=lf
+*.gyp text eol=lf
+*.yml text eol=lf
+*.node binary
+*.dll binary
+*.dylib binary
+*.so binary
+*.lib binary

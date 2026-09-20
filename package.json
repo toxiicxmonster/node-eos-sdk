@@ -1,0 +1,75 @@
+{
+  "name": "node-eos-sdk",
+  "version": "0.1.0",
+  "description": "Node.js and Electron native binding for the Epic Online Services C SDK: Platform, Connect, Lobby and P2P. Cross-store multiplayer between Steam, Epic Games Store and standalone players.",
+  "keywords": [
+    "eos",
+    "epic-online-services",
+    "epic-games",
+    "crossplay",
+    "multiplayer",
+    "p2p",
+    "lobby",
+    "electron",
+    "native",
+    "n-api",
+    "steam"
+  ],
+  "homepage": "https://github.com/toxiicxmonster/node-eos-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/toxiicxmonster/node-eos-sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toxiicxmonster/node-eos-sdk.git"
+  },
+  "license": "MIT",
+  "author": "Bailey McCreary",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "binding.gyp",
+    "src/",
+    "scripts/",
+    "prebuilds/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "install": "node-gyp-build",
+    "check-sdk": "node scripts/check-sdk.js",
+    "build": "node-gyp rebuild",
+    "build:debug": "node-gyp rebuild --debug",
+    "bundle": "prebuildify --napi --strip",
+    "test": "node --test \"test/unit/**/*.test.js\"",
+    "test:smoke": "node test/smoke.js",
+    "test:loopback": "node test/p2p-loopback.js"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.0",
+    "node-gyp-build": "^4.8.4"
+  },
+  "devDependencies": {
+    "node-gyp": "^11.0.0",
+    "prebuildify": "^6.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "binary": {
+    "napi_versions": [
+      8
+    ]
+  }
+}
