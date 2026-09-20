@@ -34,6 +34,15 @@ yarn-error.log*
 !.env.example
 eos-credentials.json
 
+# --- Local working notes -------------------------------------------------
+# Integration notes, review scratch and anything else written for one consumer
+# of this package rather than for the package itself. Keep them local: this is
+# a public repository and notes about a specific game are not its business.
+INTEGRATION-NOTES.md
+NOTES.md
+notes/
+*.local.md
+
 # --- Editors / OS --------------------------------------------------------
 .vscode/
 .idea/
