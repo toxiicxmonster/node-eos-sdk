@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs everywhere, including on forks. The EOS SDK cannot be redistributed,
+  # so CI has no SDK and no compiler step -- which is exactly why the unit
+  # suite is written to need neither.
+  javascript:
+    name: JS surface (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # --ignore-scripts skips the node-gyp-build install hook, which has no
+      # SDK to build against here.
+      - run: npm install --ignore-scripts
+      - run: npm test
+
+  sdk-guard:
+    name: SDK is not committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Epic's licence does not permit redistributing the SDK. This is a
+      # licence violation, not a style issue, so it fails the build.
+      - name: Check vendor/eos is empty
+        run: |
+          set -euo pipefail
+          tracked=$(git ls-files vendor/eos | grep -v -E '^vendor/eos/(README\.md|\.gitkeep)$' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::EOS SDK files are committed. They must not be:"
+            echo "$tracked"
+            exit 1
+          fi
+          echo "ok: vendor/eos contains only placeholders"
+
+      - name: Check no credentials are committed
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)\.env$' ; then
+            echo "::error::a .env file is committed"
+            exit 1
+          fi
+          echo "ok: no .env tracked"
+
+  # The native build needs an SDK, so it can only run where one is available:
+  # a self-hosted runner, or a workflow with access to a private copy. Left
+  # here as the shape of that job for anyone who has one.
+  native:
+    name: Native build
+    if: false
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Fetch the EOS SDK into vendor/eos
+        run: echo 'supply your own SDK here'
+      - run: npm install --ignore-scripts
+      - run: npm run check-sdk
+      - run: npm run build
+      - run: npm run bundle

@@ -1,0 +1,42 @@
+# --- Epic Online Services SDK -------------------------------------------
+# The EOS SDK is NOT redistributable. Nothing under vendor/eos/ may ever be
+# committed to this repository. See docs/sdk-setup.md.
+vendor/eos/**
+!vendor/eos/README.md
+!vendor/eos/.gitkeep
+
+# --- Build output --------------------------------------------------------
+build/
+prebuilds/
+*.node
+*.o
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.dll
+*.dylib
+*.so
+*.so.*
+
+# --- Node ----------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.npm/
+*.tgz
+
+# --- Credentials ---------------------------------------------------------
+# Deployment credentials (client secret in particular) are secrets.
+.env
+.env.*
+!.env.example
+eos-credentials.json
+
+# --- Editors / OS --------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

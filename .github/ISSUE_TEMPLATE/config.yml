@@ -1,0 +1,10 @@
+blank_issues_enabled: true
+contact_links:
+  - name: EOS SDK bug or question
+    url: https://eoshelp.epicgames.com/
+    about: >
+      Issues in the Epic Online Services SDK itself, and Developer Portal
+      configuration questions, belong with Epic rather than here.
+  - name: Security vulnerability
+    url: https://github.com/toxiicxmonster/node-eos-sdk/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.

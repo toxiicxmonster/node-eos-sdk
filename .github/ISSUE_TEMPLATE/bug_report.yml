@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in the binding behaves wrongly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing an authorisation or login failure, please run
+        `node test/smoke.js`. A Developer Portal client policy that does not
+        permit Connect login produces failures that look exactly like binding
+        bugs, and that check separates the two in a minute.
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: EOS SDK version
+      placeholder: "1.17.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Node or Electron version
+      placeholder: "Electron 44, or Node 22.5.1"
+    validations:
+      required: true
+
+  - type: input
+    id: eos-result
+    attributes:
+      label: EOS result code
+      description: "`error.code` from the thrown or rejected error, if there was one"
+      placeholder: "EOS_InvalidAuth"
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, what you got, and the smallest code that shows it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sdk-log
+    attributes:
+      label: SDK log
+      description: >
+        Run with `{ debug: true }` and paste the relevant lines. The SDK is
+        talkative and usually states the real cause outright.
+      render: text
