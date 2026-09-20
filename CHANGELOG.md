@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `eos.isAvailable()` and `eos.loadError`. Requiring the package succeeds even
+  where the SDK was never vendored, so integrators had no supported way to ask
+  whether the addon would load before offering a multiplayer menu — the only
+  option was to re-implement `loadNative` from outside via `node-gyp-build`.
+  `isInitialized` does not answer it: it is false for a missing addon and an
+  uninitialised one alike.
+- `p2p.sendLarge()`, the `p2p:message` event, and the exported `fragment()` and
+  `Reassembler`. Payloads over 1170 bytes needed splitting, and the obvious way
+  to split them is wrong: slicing JSON into an envelope field re-escapes the
+  slice, so escape-heavy content can more than double with no fixed bound. The
+  8-byte binary header costs 8 bytes whatever the content. Partial messages are
+  bounded in bytes and age so a silent peer cannot hold memory.
+
 ### Changed
 
 - **Minimum Node version is now 22.** `node-gyp` 13 requires

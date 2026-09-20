@@ -94,6 +94,22 @@ wrong, and which presents as authorisation failures that look like code bugs.
 
 ## Quick start
 
+Requiring this package always succeeds, even where the SDK was never vendored —
+it has to, so the module stays requirable for tooling and tests. Ask before you
+offer multiplayer:
+
+```js
+const eos = require('node-eos-sdk');
+
+if (!eos.isAvailable()) {
+  console.warn('EOS unavailable:', eos.loadError.message);
+  // hide the multiplayer menu rather than throwing at first click
+}
+```
+
+`isInitialized` does **not** answer this question — it is false both when the
+addon is missing and when it simply has not been initialised yet.
+
 ```js
 const eos = require('node-eos-sdk');
 
@@ -225,7 +241,8 @@ Attribute values may be strings, numbers or booleans. `permissionLevel` is
 
 ```js
 eos.p2p.configure({ localUserId, socketName, autoAccept, maxPacketsPerTick });
-eos.p2p.send({ remoteUserId, data, channel, reliability });
+eos.p2p.send({ remoteUserId, data, channel, reliability });      // <= 1170 bytes
+eos.p2p.sendLarge({ remoteUserId, data, reliability });          // any size
 eos.p2p.acceptConnection({ remoteUserId });
 eos.p2p.closeConnection({ remoteUserId });
 ```
@@ -239,7 +256,39 @@ eos.p2p.closeConnection({ remoteUserId });
 - `reliability` defaults to `'reliableOrdered'`. For deterministic lockstep that
   is the right choice, not a conservative one: a lost turn stalls the match
   permanently, so head-of-line blocking beats the alternative.
-- `eos.MAX_PACKET_SIZE` is 1170 bytes. Fragment above that yourself.
+- `eos.MAX_PACKET_SIZE` is 1170 bytes. Above that, use `sendLarge()`.
+
+#### Payloads larger than one packet
+
+`sendLarge()` fragments, reassembles on the far end, and delivers the whole
+payload as a single `p2p:message` event. Both ends must be this package.
+
+```js
+eos.p2p.sendLarge({ remoteUserId: peer, data: Buffer.from(JSON.stringify(world)) });
+
+eos.on('p2p:message', ({ peerId, data }) => {
+  const world = JSON.parse(data.toString());
+});
+```
+
+**Do not hand-roll this by slicing JSON.** The obvious version — cut the JSON
+string into pieces and put each piece in an envelope field — re-escapes the
+piece when the envelope is serialised. Quotes, backslashes and newlines become
+two characters each, and multi-byte UTF-8 can expand six-fold under `\uXXXX`
+escaping, so escape-heavy content can more than double in size with no fixed
+upper bound. A slice sized to fit in testing then stops fitting in production,
+and you get a runtime failure that depends on the data.
+
+If you must implement it yourself, prefix a binary header rather than nesting
+text in text. `sendLarge()` uses 8 bytes — message id `uint32le`, index
+`uint16le`, total `uint16le` — which costs exactly 8 bytes regardless of
+content. `fragment()` and `Reassembler` are exported if you want the halves
+separately, or need to write the other end in another language.
+
+Fragments travel on a reserved channel (255 by default, `fragmentChannel` in
+`configure()`), are consumed by reassembly, and never surface as `p2p:packet`.
+Partial messages are bounded in bytes and age, so a peer that starts a large
+message and goes quiet cannot hold memory indefinitely.
 
 ### Events
 
@@ -260,7 +309,15 @@ eos.on('p2p:packet', ({ peerId, socketName, channel, data }) => {});
 | `p2p:connected` | `{ remoteUserId, socketName, connectionType, networkType }` |
 | `p2p:disconnected` | `{ remoteUserId, socketName, reason }` |
 | `p2p:packet` | `{ peerId, socketName, channel, data }` |
+| `p2p:message` | `{ peerId, socketName, data }` — a reassembled `sendLarge()` payload |
 | `p2p:backlog` | `{ maxPacketsPerTick }` — the tick is not keeping up |
+
+`lobby:member-status` has **three** outcomes, not two. Alongside `joined` and
+`left` (and `disconnected`, `kicked`, `closed`), `promoted` fires when an
+existing member becomes the owner — nobody arrived and nobody departed. Code
+that treats every status as an arrival-or-departure will silently mis-handle
+host migration, and the bug stays invisible until a host actually leaves. Branch
+on `statusName` rather than assuming.
 
 **`connect:auth-expiring` is not optional to handle if you use Steam.** Steam
 session tickets expire after about 8 hours of continuous play, after which logins

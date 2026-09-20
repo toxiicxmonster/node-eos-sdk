@@ -35,7 +35,29 @@ test('namespaces expose the documented surface', () => {
     'closeConnection',
     'configure',
     'send',
+    'sendLarge',
   ]);
+});
+
+test('availability can be probed without throwing', () => {
+  // require() of this package succeeds whether or not the addon is built, so
+  // an integrator needs a way to ask before offering a multiplayer menu.
+  // isInitialized cannot answer it: that is false for a missing addon and for
+  // an addon that simply has not been initialised yet.
+  const available = eos.isAvailable();
+  assert.equal(typeof available, 'boolean');
+
+  if (!available) {
+    assert.ok(eos.loadError instanceof Error);
+    assert.equal(eos.loadError.code, 'EOS_ADDON_NOT_LOADED');
+    assert.match(eos.loadError.message, /vendor\/eos/);
+    assert.equal(eos.isInitialized, false);
+  } else {
+    assert.equal(eos.loadError, null);
+  }
+
+  // Repeat calls must be cheap and consistent, not re-probe and diverge.
+  assert.equal(eos.isAvailable(), available);
 });
 
 test('constants match the SDK values they mirror', () => {

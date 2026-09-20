@@ -72,6 +72,7 @@ const LobbyMemberStatus = Object.freeze({
 });
 
 let native = null;
+let nativeLoadError = null;
 
 function loadNative() {
   if (native) return native;
@@ -89,9 +90,177 @@ function loadNative() {
     );
     error.code = 'EOS_ADDON_NOT_LOADED';
     error.cause = cause;
+    nativeLoadError = error;
     throw error;
   }
   return native;
+}
+
+const FRAGMENT_HEADER_BYTES = 8;
+const MAX_PACKET_SIZE = 1170;
+const MAX_FRAGMENT_PAYLOAD = MAX_PACKET_SIZE - FRAGMENT_HEADER_BYTES;
+const MAX_FRAGMENTS = 0xffff;
+const DEFAULT_FRAGMENT_CHANNEL = 255;
+
+/**
+ * Split a payload into wire-sized fragments.
+ *
+ * The header is binary and sits in front of the bytes, rather than the payload
+ * being a field in an envelope. That is deliberate: the obvious approach --
+ * slice a JSON string and put each slice in an envelope field -- re-escapes the
+ * slice on the way in, so escape-heavy content can more than double in size,
+ * by no fixed margin. A binary prefix adds exactly 8 bytes, always.
+ *
+ *   bytes 0-3  message id   uint32le
+ *   bytes 4-5  index        uint16le
+ *   bytes 6-7  total        uint16le
+ *
+ * Exported for testing and for anyone implementing the other half of this in a
+ * different language.
+ *
+ * @param {Buffer} data
+ * @param {number} messageId
+ * @param {number} [maxPayload]
+ * @returns {Buffer[]}
+ */
+function fragment(data, messageId, maxPayload = MAX_FRAGMENT_PAYLOAD) {
+  if (!Buffer.isBuffer(data)) {
+    throw new TypeError('fragment(data): data must be a Buffer');
+  }
+  if (maxPayload < 1) {
+    throw new RangeError('fragment: maxPayload must be at least 1');
+  }
+
+  // A zero-length payload is still one fragment, so that an empty message is
+  // delivered rather than silently dropped.
+  const total = Math.max(1, Math.ceil(data.length / maxPayload));
+  if (total > MAX_FRAGMENTS) {
+    throw new RangeError(
+      `Payload of ${data.length} bytes needs ${total} fragments, ` +
+        `over the ${MAX_FRAGMENTS} the header can address.`,
+    );
+  }
+
+  const fragments = [];
+  for (let index = 0; index < total; index += 1) {
+    const slice = data.subarray(index * maxPayload, (index + 1) * maxPayload);
+    const out = Buffer.allocUnsafe(FRAGMENT_HEADER_BYTES + slice.length);
+    out.writeUInt32LE(messageId >>> 0, 0);
+    out.writeUInt16LE(index, 4);
+    out.writeUInt16LE(total, 6);
+    slice.copy(out, FRAGMENT_HEADER_BYTES);
+    fragments.push(out);
+  }
+  return fragments;
+}
+
+/**
+ * Rebuilds messages from fragments.
+ *
+ * Fragments are indexed rather than assumed to be in order: reliableOrdered
+ * delivery makes ordering likely, but the other reliability modes do not, and a
+ * reassembler that only works under one of them is a trap.
+ *
+ * Partial messages are bounded in both bytes and age. A peer that sends the
+ * first fragment of a large message and then goes quiet must not be able to
+ * hold memory indefinitely, and a hostile one must not be able to do it on
+ * purpose.
+ */
+class Reassembler {
+  #pending = new Map();
+  #bytes = 0;
+  #maxBytes;
+  #ttlMs;
+
+  constructor({ maxPendingBytes = 8 * 1024 * 1024, ttlMs = 30_000 } = {}) {
+    this.#maxBytes = maxPendingBytes;
+    this.#ttlMs = ttlMs;
+  }
+
+  /**
+   * @param {string} peerId
+   * @param {Buffer} packet a fragment, header included
+   * @param {number} [now]
+   * @returns {Buffer|null} the complete message, or null if more is needed
+   */
+  accept(peerId, packet, now = Date.now()) {
+    if (!Buffer.isBuffer(packet) || packet.length < FRAGMENT_HEADER_BYTES) {
+      return null; // not a fragment; the peer is speaking a different protocol
+    }
+
+    const messageId = packet.readUInt32LE(0);
+    const index = packet.readUInt16LE(4);
+    const total = packet.readUInt16LE(6);
+    if (total === 0 || index >= total) return null;
+
+    const body = packet.subarray(FRAGMENT_HEADER_BYTES);
+
+    // Single-fragment messages are the common case and never touch the table.
+    if (total === 1) return Buffer.from(body);
+
+    this.#evictExpired(now);
+
+    const key = `${peerId}\u0000${messageId}`;
+    let entry = this.#pending.get(key);
+    if (entry === undefined || entry.total !== total) {
+      // A changed total means the id was reused; start over rather than mixing
+      // two messages together.
+      if (entry !== undefined) this.#drop(key);
+      entry = { total, chunks: new Array(total), received: 0, bytes: 0, at: now };
+      this.#pending.set(key, entry);
+    }
+
+    if (entry.chunks[index] !== undefined) return null; // duplicate
+    entry.chunks[index] = Buffer.from(body);
+    entry.received += 1;
+    entry.bytes += body.length;
+    entry.at = now;
+    this.#bytes += body.length;
+
+    if (entry.received === entry.total) {
+      this.#drop(key);
+      return Buffer.concat(entry.chunks);
+    }
+
+    this.#enforceBudget();
+    return null;
+  }
+
+  #drop(key) {
+    const entry = this.#pending.get(key);
+    if (entry === undefined) return;
+    this.#bytes -= entry.bytes;
+    this.#pending.delete(key);
+  }
+
+  #evictExpired(now) {
+    if (this.#pending.size === 0) return;
+    for (const [key, entry] of this.#pending) {
+      if (now - entry.at > this.#ttlMs) this.#drop(key);
+    }
+  }
+
+  /** Map iteration is insertion-ordered, so this drops the oldest first. */
+  #enforceBudget() {
+    while (this.#bytes > this.#maxBytes && this.#pending.size > 0) {
+      const oldest = this.#pending.keys().next().value;
+      this.#drop(oldest);
+    }
+  }
+
+  clear() {
+    this.#pending.clear();
+    this.#bytes = 0;
+  }
+
+  /** Bytes currently held in incomplete messages. */
+  get pendingBytes() {
+    return this.#bytes;
+  }
+
+  get pendingMessages() {
+    return this.#pending.size;
+  }
 }
 
 /**
@@ -192,6 +361,9 @@ class Lobby {
 class EosClient extends EventEmitter {
   #tickTimer = null;
   #debug = false;
+  #reassembler = new Reassembler();
+  #fragmentChannel = DEFAULT_FRAGMENT_CHANNEL;
+  #nextMessageId = 1;
 
   constructor() {
     super();
@@ -246,6 +418,40 @@ class EosClient extends EventEmitter {
     return this;
   }
 
+  /**
+   * Can the native addon be loaded at all?
+   *
+   * `require('node-eos-sdk')` deliberately succeeds on a machine where the SDK
+   * was never vendored or the addon was never built, because the module has to
+   * be requirable for tooling and tests. That leaves integrators needing to
+   * answer "is this usable?" before offering it in a menu, and `isInitialized`
+   * does not answer it: that is false both when the addon is missing and when
+   * it simply has not been initialised yet.
+   *
+   * This probes once and caches, so it is cheap to call repeatedly.
+   *
+   * @returns {boolean}
+   */
+  isAvailable() {
+    if (native) return true;
+    try {
+      loadNative();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Why the addon could not be loaded, or null if it loaded or was never tried.
+   * The message names the likely cause and where to read about it.
+   *
+   * @returns {Error|null}
+   */
+  get loadError() {
+    return native ? null : nativeLoadError;
+  }
+
   /** True once init() has succeeded and before shutdown(). */
   get isInitialized() {
     return Boolean(native && native.platform.isInitialized());
@@ -263,6 +469,8 @@ class EosClient extends EventEmitter {
       clearInterval(this.#tickTimer);
       this.#tickTimer = null;
     }
+    // Half-received messages are worthless once the platform is gone.
+    this.#reassembler.clear();
     if (native) {
       native.platform.shutdown();
       native._setEventSink(null);
@@ -275,6 +483,21 @@ class EosClient extends EventEmitter {
     if (name === 'lobby:member-status') {
       payload.statusName = LobbyMemberStatus[payload.status] ?? 'unknown';
     }
+
+    // Traffic on the fragment channel is this package's own reassembly
+    // protocol, not application data, so it surfaces as 'p2p:message' once
+    // whole and never as a half-a-payload 'p2p:packet'.
+    if (name === 'p2p:packet' && payload.channel === this.#fragmentChannel) {
+      const data = this.#reassembler.accept(payload.peerId, payload.data);
+      if (data === null) return;
+      this.emit('p2p:message', {
+        peerId: payload.peerId,
+        socketName: payload.socketName,
+        data,
+      });
+      return;
+    }
+
     this.emit(name, payload);
   }
 
@@ -365,6 +588,9 @@ class EosClient extends EventEmitter {
        */
       configure: (options) => {
         const api = loadNative();
+        if (options && Number.isInteger(options.fragmentChannel)) {
+          this.#fragmentChannel = options.fragmentChannel;
+        }
         api.p2p.configure(options);
         api.p2p.watchConnections();
       },
@@ -377,6 +603,45 @@ class EosClient extends EventEmitter {
        * @param {string} [options.reliability='reliableOrdered']
        */
       send: (options) => loadNative().p2p.send(options),
+
+      /**
+       * Send a payload of any size, fragmenting it if it exceeds the 1170-byte
+       * wire limit. The far end must also be this package: fragments arrive as
+       * one `p2p:message` event once complete, never as `p2p:packet`.
+       *
+       * Prefer this over hand-rolled splitting. The obvious hand-rolled version
+       * -- slice a JSON string, put each slice in an envelope field -- re-escapes
+       * the slice on the way in, so escape-heavy content can more than double in
+       * size by no fixed margin, and a payload that fit in testing stops fitting
+       * in production. The 8-byte binary header here costs 8 bytes, always.
+       *
+       * Defaults to reliableOrdered. Under an unreliable mode a lost fragment
+       * means the message never completes and its partial sits in memory until
+       * the reassembly timeout evicts it.
+       *
+       * @param {object} options
+       * @param {string} options.remoteUserId
+       * @param {Buffer} options.data
+       * @param {string} [options.reliability='reliableOrdered']
+       * @returns {number} how many fragments were sent
+       */
+      sendLarge: (options) => {
+        const api = loadNative();
+        const messageId = this.#nextMessageId;
+        // uint32, and 0 is left unused so a zeroed buffer is never a valid id.
+        this.#nextMessageId = (this.#nextMessageId % 0xffffffff) + 1;
+
+        const fragments = fragment(options.data, messageId);
+        for (const piece of fragments) {
+          api.p2p.send({
+            ...options,
+            data: piece,
+            channel: this.#fragmentChannel,
+            reliability: options.reliability ?? 'reliableOrdered',
+          });
+        }
+        return fragments.length;
+      },
 
       acceptConnection: (options) => loadNative().p2p.acceptConnection(options),
       closeConnection: (options) => loadNative().p2p.closeConnection(options),
@@ -395,10 +660,17 @@ const client = new EosClient();
 module.exports = client;
 module.exports.EosClient = EosClient;
 module.exports.Lobby = Lobby;
+module.exports.Reassembler = Reassembler;
+module.exports.fragment = fragment;
+module.exports.FRAGMENT_HEADER_BYTES = FRAGMENT_HEADER_BYTES;
+/** Largest payload that fits in one fragment, header deducted. */
+module.exports.MAX_FRAGMENT_PAYLOAD = MAX_FRAGMENT_PAYLOAD;
+/** Channel reserved for fragmented messages; override in p2p.configure. */
+module.exports.DEFAULT_FRAGMENT_CHANNEL = DEFAULT_FRAGMENT_CHANNEL;
 module.exports.CredentialType = CredentialType;
 module.exports.PacketReliability = PacketReliability;
 module.exports.LobbyPermissionLevel = LobbyPermissionLevel;
 module.exports.LobbyMemberStatus = LobbyMemberStatus;
 module.exports.LogLevel = LogLevel;
-/** EOS_P2P_MAX_PACKET_SIZE. Larger payloads must be fragmented by the caller. */
-module.exports.MAX_PACKET_SIZE = 1170;
+/** EOS_P2P_MAX_PACKET_SIZE. Use p2p.sendLarge() for anything bigger. */
+module.exports.MAX_PACKET_SIZE = MAX_PACKET_SIZE;

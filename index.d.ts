@@ -124,6 +124,21 @@ export interface P2PConfigureOptions {
   autoAccept?: boolean;
   /** Default 1024. Exceeding it emits `p2p:backlog`. */
   maxPacketsPerTick?: number;
+  /**
+   * Channel reserved for sendLarge() fragments. Default 255. Traffic on it is
+   * consumed by reassembly and surfaces as `p2p:message`, so do not also use
+   * this channel for raw send().
+   */
+  fragmentChannel?: number;
+}
+
+export interface P2PSendLargeOptions {
+  remoteUserId: string;
+  data: Buffer;
+  localUserId?: string;
+  socketName?: string;
+  /** Default 'reliableOrdered'. An unreliable mode can strand a partial. */
+  reliability?: PacketReliabilityName;
 }
 
 export interface P2PSendOptions {
@@ -152,6 +167,13 @@ export interface PacketEvent {
   peerId: string;
   socketName: string;
   channel: number;
+  data: Buffer;
+}
+
+/** A payload sent with sendLarge(), delivered once every fragment has arrived. */
+export interface MessageEvent {
+  peerId: string;
+  socketName: string;
   data: Buffer;
 }
 
@@ -192,6 +214,7 @@ export interface EosEvents {
     { remoteUserId: string; socketName: string; reason: number },
   ];
   'p2p:packet': [PacketEvent];
+  'p2p:message': [MessageEvent];
   'p2p:backlog': [{ maxPacketsPerTick: number }];
 }
 
@@ -204,7 +227,27 @@ export interface EosError extends Error {
   resultCode: number;
 }
 
+/**
+ * The addon could not be loaded at all -- usually because the SDK was never
+ * vendored. It carries no EOS result, because no EOS call was reached.
+ */
+export interface AddonLoadError extends Error {
+  code: 'EOS_ADDON_NOT_LOADED';
+  cause?: unknown;
+}
+
 export declare class EosClient extends EventEmitter<EosEvents> {
+  /**
+   * Can the native addon be loaded? Probes once and caches.
+   *
+   * `require()` of this package succeeds even with no SDK vendored, so this is
+   * how to decide whether to offer multiplayer at all. `isInitialized` does not
+   * answer it: that is false for a missing addon and for an uninitialised one
+   * alike.
+   */
+  isAvailable(): boolean;
+  /** Why the addon would not load, or null if it loaded or was never tried. */
+  readonly loadError: AddonLoadError | null;
   /** Initialise the SDK and start ticking. Once per process. */
   init(options: InitOptions): this;
   /** Release the platform. EOS cannot be re-initialised afterwards. */
@@ -231,6 +274,11 @@ export declare class EosClient extends EventEmitter<EosEvents> {
     /** Required before any packet is delivered. */
     configure(options: P2PConfigureOptions): void;
     send(options: P2PSendOptions): void;
+    /**
+     * Send a payload of any size, fragmenting past the 1170-byte wire limit.
+     * Arrives as one `p2p:message`. Returns the fragment count.
+     */
+    sendLarge(options: P2PSendLargeOptions): number;
     acceptConnection(options: P2PConnectionOptions): void;
     closeConnection(options: P2PConnectionOptions): void;
   };
@@ -262,5 +310,33 @@ export declare const LogLevel: Readonly<{
   VERBOSE: 500;
   VERY_VERBOSE: 600;
 }>;
-/** EOS_P2P_MAX_PACKET_SIZE. Larger payloads must be fragmented by the caller. */
+/** EOS_P2P_MAX_PACKET_SIZE. Use `p2p.sendLarge()` for anything bigger. */
 export declare const MAX_PACKET_SIZE: 1170;
+/** Bytes of binary header each fragment carries. */
+export declare const FRAGMENT_HEADER_BYTES: 8;
+/** Largest payload that fits in one fragment, header deducted. */
+export declare const MAX_FRAGMENT_PAYLOAD: 1162;
+/** Channel reserved for fragments unless overridden in `p2p.configure`. */
+export declare const DEFAULT_FRAGMENT_CHANNEL: 255;
+
+/**
+ * Split a payload into wire-sized fragments. Exported for testing and for
+ * implementing the other half of the protocol in another language.
+ *
+ * Header: message id (uint32le), index (uint16le), total (uint16le).
+ */
+export declare function fragment(
+  data: Buffer,
+  messageId: number,
+  maxPayload?: number,
+): Buffer[];
+
+/** Rebuilds messages from fragments, bounded in both bytes and age. */
+export declare class Reassembler {
+  constructor(options?: { maxPendingBytes?: number; ttlMs?: number });
+  /** The complete message, or null if more fragments are needed. */
+  accept(peerId: string, packet: Buffer, now?: number): Buffer | null;
+  clear(): void;
+  readonly pendingBytes: number;
+  readonly pendingMessages: number;
+}
