@@ -4,15 +4,14 @@
 /**
  * Runs the unit suite on any supported Node version.
  *
- * `node --test` disagrees with itself across releases about what a positional
- * argument means: Node 18 and 20 accept a directory but not a glob pattern,
- * Node 22 and later accept a glob but resolve a bare directory as a file. An
- * unquoted shell glob in the npm script would paper over it on Unix and fail on
- * Windows, where cmd does not expand globs.
+ * `node --test` has changed its mind more than once about what a positional
+ * argument means -- a directory, a glob, a literal file path -- and the forms
+ * it accepts differ by release. An unquoted shell glob in the npm script would
+ * paper over that on Unix and fail on Windows, where cmd does not expand globs.
  *
- * Explicit file paths are the one form every version accepts, so this finds
- * them and passes them through. Fifteen lines is cheaper than a matrix of
- * platform-specific npm scripts.
+ * Explicit file paths are the one form every version has always accepted, so
+ * this finds them and passes them through. Fifteen lines is cheaper than
+ * re-learning the argument rules on each Node upgrade.
  */
 
 const { spawnSync } = require('node:child_process');

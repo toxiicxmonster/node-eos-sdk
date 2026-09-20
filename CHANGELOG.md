@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Minimum Node version is now 22.** `node-gyp` 13 requires
+  `^22.22.2 || ^24.15.0 || >=26`, and Node 18 and 20 are both past end of life,
+  so the declared floor now matches what can actually build. The CI matrix
+  tests 22 and 24.
+- Bumped `node-gyp` to `^13.0.2`, `actions/checkout` to v7 and
+  `actions/setup-node` to v7.
+
+### Fixed
+
+- `npm test` failed on some Node versions. `node --test` accepts different
+  positional argument forms across releases, so `scripts/test-unit.js` now
+  resolves explicit file paths, which every version accepts.
+
 ## [0.1.0] - 2026-09-20
 
 Initial release. Alpha.

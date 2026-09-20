@@ -58,7 +58,7 @@ requests that wrap one following the existing pattern are welcome.
 
 ## Requirements
 
-- **Node.js 18+**, or Electron. N-API 8.
+- **Node.js 22+**, or Electron. N-API 8.
 - A C++17 toolchain:
   - Windows — Visual Studio Build Tools with the C++ workload
   - macOS — Xcode Command Line Tools
